@@ -42,26 +42,31 @@ jobs:
           echo "action_kernel_ver=$action_kernel_ver"
           echo "kernel_ver=$kernel_ver"
           if [[ "${action_kernel_ver}" == *"${kernel_ver}"* ]]; then
-           echo "check.status=fail" >> $GITHUB_ENV
+           echo "check_status=fail" >> $GITHUB_ENV
           else
-           echo "check.status=success" >> $GITHUB_ENV
+           echo "check_status=success" >> $GITHUB_ENV
           fi
 
       - name: Update config
         id: update
-        if: ${{ env.check.status }} == 'success'
+        if: ${{ env.check_status == 'success' }}
         working-directory: /workdir
         run: |
           sudo apt-get -qq install -y rpm2cpio 
           elrepo_c9_ver=$(curl -s 'https://elrepo.org/linux/kernel/el9/x86_64/RPMS/?C=N;O=D' | grep -oP 'kernel-ml-headers[^"]+' | head -n 1 | awk -F '-' '{print $4}')
-          sudo wget https://elrepo.org/linux/kernel/el9/x86_64/RPMS/kernel-ml-$elrepo_c9_ver-1.el9.elrepo.x86_64.rpm
-          sudo rpm2cpio kernel-ml-$elrepo_c9_ver-1.el9.elrepo.x86_64.rpm | cpio -divm
-          cd /workdir/boot
+          #old
+          #sudo wget https://elrepo.org/linux/kernel/el9/x86_64/RPMS/kernel-ml-$elrepo_c9_ver-1.el9.elrepo.x86_64.rpm
+          sudo wget https://elrepo.org/linux/kernel/el9/x86_64/RPMS/kernel-ml-devel-$elrepo_c9_ver-1.el9.elrepo.x86_64.rpm
+          sudo rpm2cpio kernel-ml-devel-$elrepo_c9_ver-1.el9.elrepo.x86_64.rpm | cpio -divm
+          #cd /workdir/usr/src/kernels/$elrepo-1
+          
+          cd /workdir/usr/src/kernels/$elrepo_c9_ver-1.el9.elrepo.x86_64/
           config=/home/runner/work/kernel/kernel/config_elrepo
           elrepo_patch=/home/runner/work/kernel/kernel/elrepo_config.patch
 
           sudo rm -rf $config
-          sudo mv config-*-1.el9.elrepo.x86_64 $config
+          #sudo mv config-*-1.el9.elrepo.x86_64 $config
+          sudo mv .config $config
           sudo sed -ri 's/.*CONFIG_TCP_CONG_CUBIC.*/CONFIG_TCP_CONG_CUBIC=m/' ${config}
           sudo sed -ri 's/.*CONFIG_TCP_CONG_BBR.*/CONFIG_TCP_CONG_BBR=y/' ${config}
           sudo sed -ri '/.*CONFIG_DEFAULT_CUBIC.*/i\CONFIG_TCP_CONG_BBR2=m' ${config}
@@ -107,11 +112,11 @@ jobs:
           sudo sed -ri '/CONFIG_MODULE_SIG_KEY=*/c\CONFIG_MODULE_SIG_KEY=""' ${config}
           sudo sed -ri '/CONFIG_SYSTEM_TRUSTED_KEYS=*/c\CONFIG_SYSTEM_TRUSTED_KEYS=""' ${config}
           
-          echo "update.status=success" >> $GITHUB_ENV
+          echo "update_status=success" >> $GITHUB_ENV
 
       - name: Commit files
         continue-on-error: true
-        if: ${{ env.update.status }} == 'success'
+        if: ${{ env.update_status }} == 'success'
         run: |
           git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
@@ -119,7 +124,7 @@ jobs:
 
       - name: Push changes
         continue-on-error: true
-        if: ${{ env.update.status }} == 'success'
+        if: ${{ env.update_status }} == 'success'
         uses: ad-m/github-push-action@master
         with:
           github_token: ${{ secrets.TOKEN }}
