@@ -83,32 +83,48 @@ jobs:
       if: steps.code.outputs.status == 'success'
       working-directory: /workdir
       run: |
+        # 获取最新稳定内核版本
         kernel_ver=$(curl -s https://www.kernel.org/ | grep ' <a href="https://cdn.kernel.org/pub/linux/kernel/' | head -n 1 | awk -F '[>]' '{print $2}' | awk -F '[<]' '{print $1}')
+        echo "Building kernel version: $kernel_ver"
+        wget -q https://cdn.kernel.org/pub/linux/kernel/v$(echo $kernel_ver | cut -d. -f1).x/linux-$kernel_ver.tar.xz
+        tar -xf linux-$kernel_ver.tar.xz
         cd linux-$kernel_ver
-        #wget -O .config https://raw.githubusercontent.com/langren1353/linux-kernel/master/5.13.arm64.config
+        # 确保 apt 更新（容器可能无缓存）
+        apt update
+        # 安装编译依赖 + 交叉编译工具链（显式安装 aarch64-gcc）
+        apt install -y --no-install-recommends \
+          libssl-dev bc kmod cpio flex bison libncurses-dev libelf-dev \
+          gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu crossbuild-essential-arm64
+        # 验证交叉编译器是否可用
+        if [ ! -x /usr/bin/aarch64-linux-gnu-gcc ]; then
+            echo "❌ ERROR: /usr/bin/aarch64-linux-gnu-gcc not found!"
+            ls -l /usr/bin/aarch64-linux-gnu-* || true
+            exit 1
+        fi
+        # 获取配置文件
         wget -O .config https://raw.githubusercontent.com/langren1353/linux-kernel/master/kernel-aarch64-rhel.config
-        sed -ri '/CONFIG_SYSTEM_TRUSTED_KEYS/s/=.+/=""/g' .config
-        sed -ri '/CONFIG_DEBUG_KERNEL=/c\CONFIG_DEBUG_KERNEL=n' .config
-        sed -ri '/CONFIG_DEBUG_MISC=/c\CONFIG_DEBUG_MISC=n' .config
-        sed -ri '/CONFIG_MODULE_SIG=/c\CONFIG_MODULE_SIG=n' .config
-        sed -ri '/CONFIG_DEBUG_INFO=/c\CONFIG_DEBUG_INFO=n' .config
-        sed -i 's/.*CONFIG_DEBUG_INFO_BTF.*/CONFIG_DEBUG_INFO_BTF=n/' .config
-        sed -i 's/.*CONFIG_DEBUG_INFO_DWARF4.*/CONFIG_DEBUG_INFO_DWARF4=n/' .config
-        sed -i 's/.*CONFIG_DEBUG_INFO_DWARF5.*/CONFIG_DEBUG_INFO_DWARF5=n/' .config
-        sed -i 's/.*CONFIG_DEBUG_INFO_NONE.*/CONFIG_DEBUG_INFO_NONE=n/' .config
-        scripts/config --disable MODULE_SIG
+        # 同步配置（必须指定 ARCH=arm64）
+        make ARCH=arm64 olddefconfig
+        # 编译 scripts（用于 scripts/config）
+        make ARCH=arm64 scripts
+        # 禁用调试和签名相关选项
         scripts/config --disable DEBUG_INFO
         scripts/config --disable DEBUG_INFO_BTF
         scripts/config --disable DEBUG_INFO_DWARF4
         scripts/config --disable DEBUG_INFO_DWARF5
-        scripts/config --disable DEBUG_INFO_NONE
-        scripts/config --disable SYSTEM_TRUSTED_KEYS
-        scripts/config --disable SYSTEM_REVOCATION_KEYS
-        echo -e "$(nproc) thread compile"
-        sudo time make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- -j$(nproc) bindeb-pkg
-        cd /workdir && mv *.deb /workdir/upload
+        scripts/config --disable DEBUG_KERNEL
+        scripts/config --disable DEBUG_MISC
+        scripts/config --disable MODULE_SIG
+        scripts/config --disable SYSTEM_TRUSTED_KEYRING
+        sed -i 's/CONFIG_SYSTEM_TRUSTED_KEYS=.*/CONFIG_SYSTEM_TRUSTED_KEYS=""/' .config
+        # 再次同步配置（确保干净）
+        make ARCH=arm64 olddefconfig
+        # 编译 deb 包
+        time make ARCH=arm64 CROSS_COMPILE=/usr/bin/aarch64-linux-gnu- -j$(nproc) bindeb-pkg
+        # 移动产物
+        cd /workdir && mv linux-*.deb /workdir/upload/ 2>/dev/null || echo "No .deb files generated."
         echo "::set-output name=status::success"
-        echo "FILE_DATE=Kernel_Debian_$kernel_ver_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV   
+        echo "FILE_DATE=Kernel_Debian_$kernel_ver_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
 
     - name: Check space usage
       if: (!cancelled()) && steps.compile.outputs.status == 'success'
