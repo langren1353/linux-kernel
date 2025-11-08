@@ -30,6 +30,12 @@ jobs:
     container: docker.io/qctt/kernelbuild:debian12
     
     steps:
+    - name: Base requirements
+      run: |
+        # packages
+        apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 6ED0E7B82643E131 78DBA3BC47EF2265 F8D2585B8783D481
+        apt update && apt install -y git nodejs npm libssl-dev
+
     - name: Checkout
       uses: actions/checkout@main
     
